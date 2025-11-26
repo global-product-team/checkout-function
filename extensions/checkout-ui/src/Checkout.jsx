@@ -1,135 +1,108 @@
-// import '@shopify/ui-extensions/preact';
-// import {render} from 'preact';
-// import {useEffect, useState} from 'preact/hooks';
- 
-// export default function extension() {
-//   render(<Extension />, document.body);
-// }
- 
-// function Extension() {
-//   const [data, setData] = useState();
- 
-//   useEffect(() => {
-//     shopify
-//       .query(
-//         `query ($first: Int!) {
-//           products(first: $first) {
-//             nodes {
-//               id
-//               title
-//               variants(first: 1) {
-//                 nodes {
-//                   id
-//                 }
-//               }
-//             }
-//           }
-//         }`,
-//         {variables: {first: 5}},
-//       )
-//       .then(({data}) => setData(data))
-//       .catch(console.error);
-//   }, []);
- 
-//   async function addToCart(variantId) {
-//     const result = await shopify.applyCartLinesChange({
-//       type: "addCartLine",
-//       merchandiseId: variantId,
-//       quantity: 1,
-//     });
- 
-//     console.log("Add to cart result:", result);
-//   }
- 
-//   return (
-//     <s-unordered-list>
-//       {data?.products?.nodes.map((node) => (
-//         <s-list-item key={node.id}>
-//           <s-stack direction="horizontal" gap="base">
-//             <s-text>{node.title}</s-text>
-//             <s-button
-//               onClick={() =>
-//                 addToCart(node.variants.nodes[0].id)
-//               }
-//             >
-//               장바구니 추가
-//             </s-button>
-//           </s-stack>
-//         </s-list-item>
-//       ))}
-//     </s-unordered-list>
-//   );
-// }
- 
-
 import '@shopify/ui-extensions/preact';
 import {render} from 'preact';
 import {useCartLines} from '@shopify/ui-extensions/checkout/preact';
- 
+import {useState, useEffect} from 'preact/hooks';
+
 // 1. Export the extension
 export default function extension() {
   render(<Extension />, document.body);
 }
- 
+
 function Extension() {
-  // 2. 현재 체크아웃에 담긴 cart line들
+  // 현재 체크아웃에 담긴 cart line들
   const cartLines = useCartLines() || [];
- 
+
   // 장바구니에 이미 담긴 variant id 목록
   const cartVariantIds = new Set(
     cartLines.map((line) => line.merchandise.id),
   );
- 
-  // 3. 업셀 후보 상품들 정의
-  //  → 여기만 실제 상품 정보로 교체하면 됨
-  const upsellCandidates = [
-    {
-      // 실제 Variant GID로 교체
-      // 예: "gid://shopify/ProductVariant/1234567890"
-      variantId: 'gid://shopify/ProductVariant/51366102860059',
-      title: 'Super-High-Rise',
-      subtitle: 'Super-High-Rise 도 사라사~!',
-      priceText: '$2,000.00',
-    },
-    {
-      variantId: 'gid://shopify/ProductVariant/51366142345499',
-      title: 'Layered Bra',
-      subtitle: '추천템 브라~~',
-      priceText: '$3,000.00',
-    },
-    {
-      variantId: 'gid://shopify/ProductVariant/51366142542107',
-      title: 'Legging 25"',
-      subtitle: '레깅수',
-      priceText: '$500.00',
-    },
-  ];
- 
-  // 이미 장바구니에 있는 variant는 추천에서 제외
-  const upsellItems = upsellCandidates.filter(
-    (item) => !cartVariantIds.has(item.variantId),
-  );
- 
+
+  // shopify.query() 로 가져온 업셀 후보들 상태
+  const [upsellItems, setUpsellItems] = useState([]);
+
+  // 2. 전체 상품(또는 일부)에서 업셀 후보 가져오기
+  useEffect(() => {
+    let cancelled = false;
+
+    shopify
+      .query(
+        `query UpsellProducts($first: Int!) {
+          products(first: $first, sortKey: BEST_SELLING) {
+            nodes {
+              id
+              title
+              handle
+              variants(first: 1) {
+                nodes {
+                  id
+                  price {
+                    amount
+                    currencyCode
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        {variables: {first: 20}}, // 필요하면 개수 조절
+      )
+      .then(({data}) => {
+        if (cancelled) return;
+
+        const nodes = data?.products?.nodes || [];
+        const items = [];
+
+        for (const product of nodes) {
+          const variant = product?.variants?.nodes?.[0];
+          if (!variant) continue;
+
+          // 이미 장바구니에 있는 variant는 제외
+          if (cartVariantIds.has(variant.id)) continue;
+
+          items.push({
+            variantId: variant.id,
+            title: product.title,
+            // 간단히 handle을 서브텍스트로 사용 (원하면 태그/타입 등으로 교체 가능)
+            subtitle: product.handle?.replace(/-/g, ' ') || '',
+            priceText: formatPrice(variant.price),
+          });
+        }
+
+        setUpsellItems(items);
+      })
+      .catch((error) => {
+        console.error('Upsell products query failed:', error);
+        if (!cancelled) setUpsellItems([]);
+      });
+
+    // cart 라인 개수가 바뀔 때마다 다시 계산
+    // (너무 자주 돌리고 싶지 않으면 [] 로 두고 한 번만 실행해도 됨)
+  }, [cartLines.length]);
+
   // 추천할 게 없으면 아무것도 표시하지 않음
-  if (upsellItems.length === 0) {
+  if (!upsellItems.length) {
     return null;
   }
- 
-  // 4. 장바구니에 상품 추가하는 함수
+
+  // 3. 장바구니에 상품 추가하는 함수
   async function handleAddToCart(variantId) {
     const result = await shopify.applyCartLinesChange({
       type: 'addCartLine',
       merchandiseId: variantId,
       quantity: 1,
     });
- 
+
     if (result.type === 'error') {
-      // 최소한 콘솔에만 에러 찍어두기
       console.error('Failed to add upsell item:', result.message);
+    } else {
+      console.log('Add to cart result:', result);
     }
   }
-console.log(cartLines.map((line) => line.merchandise.id));
-  // 5. UI 렌더링
+
+  // 디버깅용: 현재 장바구니 variant id들
+  console.log('cart variant ids:', cartLines.map((line) => line.merchandise.id));
+
+  // 4. UI 렌더링
   return (
     <s-banner tone="info" heading="이 상품도 함께 많이 담으셨어요">
       <s-stack direction="block" gap="base">
@@ -145,12 +118,14 @@ console.log(cartLines.map((line) => line.merchandise.id));
               <s-text size="medium" emphasis="bold">
                 {item.title}
               </s-text>
-              <s-text size="small" appearance="subdued">
-                {item.subtitle}
-              </s-text>
+              {item.subtitle ? (
+                <s-text size="small" appearance="subdued">
+                  {item.subtitle}
+                </s-text>
+              ) : null}
               <s-text size="small">{item.priceText}</s-text>
             </s-stack>
- 
+
             <s-button
               variant="primary"
               onClick={() => handleAddToCart(item.variantId)}
@@ -162,4 +137,20 @@ console.log(cartLines.map((line) => line.merchandise.id));
       </s-stack>
     </s-banner>
   );
+}
+
+// 가격 포맷 간단 처리
+function formatPrice(price) {
+  if (!price) return '';
+  const amount = Number(price.amount);
+  if (Number.isNaN(amount)) return `${price.amount} ${price.currencyCode || ''}`;
+
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: price.currencyCode || 'USD',
+    }).format(amount);
+  } catch {
+    return `${amount} ${price.currencyCode || ''}`;
+  }
 }
