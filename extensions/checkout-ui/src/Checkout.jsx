@@ -30,11 +30,9 @@ function Extension() {
               id
               title
               handle
-              images(first: 1) {
-                nodes {
-                  url
-                  altText
-                }
+              featuredImage {
+                url
+                altText
               }
               variants(first: 1) {
                 nodes {
@@ -62,17 +60,15 @@ function Extension() {
 
           if (cartVariantIds.has(variant.id)) continue;
 
-          const imageNode = product.images?.nodes?.[0];
-          const imageUrl = imageNode?.url;
-          const altText = imageNode?.altText || product.title;
+          const image = product.featuredImage;
 
           items.push({
             variantId: variant.id,
             title: product.title,
             subtitle: product.handle?.replace(/-/g, ' ') || '',
             priceText: formatPrice(variant.price),
-            imageUrl,
-            altText,
+            imageUrl: image?.url || '',
+            imageAlt: image?.altText || product.title,
           });
         }
 
@@ -105,12 +101,16 @@ function Extension() {
       console.log('Add to cart result:', result);
     }
   }
-     
+
+  console.log(
+    'cart variant ids:',
+    cartLines.map((line) => line.merchandise.id),
+  );
+
   return (
     <s-banner tone="info" heading="이 상품도 함께 많이 담으셨어요">
       <s-stack direction="block" gap="base">
         {upsellItems.slice(0, 2).map((item) => (
-        
           <s-stack
             key={item.variantId}
             direction="inline"
@@ -118,30 +118,26 @@ function Extension() {
             inlineAlignment="space-between"
             blockAlignment="center"
           >
-            {item.imageUrl ? (
-              <s-box
-                style={{
-                  width: '60px',
-                  height: '60px',
-                  borderRadius: '8px',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                  backgroundImage: `url(${item.imageUrl})`,
-                }}
-                aria-label={item.altText}
-              />
-            ) : null}
+            <s-stack direction="inline" gap="base" blockAlignment="center">
+              {item.imageUrl && (
+                <s-product-thumbnail
+                  src={item.imageUrl}
+                  totalItems={1}
+                  aria-label={item.imageAlt}
+                ></s-product-thumbnail>
+              )}
 
-            <s-stack direction="block" gap="none">
-              <s-text size="medium" emphasis="bold">
-                {item.title}
-              </s-text>
-              {item.subtitle ? (
-                <s-text size="small" appearance="subdued">
-                  {item.subtitle}
+              <s-stack direction="block" gap="none">
+                <s-text size="medium" emphasis="bold">
+                  {item.title}
                 </s-text>
-              ) : null}
-              <s-text size="small">{item.priceText}</s-text>
+                {item.subtitle ? (
+                  <s-text size="small" appearance="subdued">
+                    {item.subtitle}
+                  </s-text>
+                ) : null}
+                <s-text size="small">{item.priceText}</s-text>
+              </s-stack>
             </s-stack>
 
             <s-button
@@ -151,7 +147,6 @@ function Extension() {
               장바구니에 추가
             </s-button>
           </s-stack>
-          
         ))}
       </s-stack>
     </s-banner>
@@ -161,9 +156,7 @@ function Extension() {
 function formatPrice(price) {
   if (!price) return '';
   const amount = Number(price.amount);
-  if (Number.isNaN(amount)) {
-    return `${price.amount} ${price.currencyCode || ''}`;
-  }
+  if (Number.isNaN(amount)) return `${price.amount} ${price.currencyCode || ''}`;
 
   try {
     return new Intl.NumberFormat(undefined, {
