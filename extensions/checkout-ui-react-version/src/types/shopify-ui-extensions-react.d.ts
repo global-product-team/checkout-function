@@ -1,0 +1,1 @@
+declare module '@shopify/ui-extensions-react';
